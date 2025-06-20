@@ -1,43 +1,39 @@
 #!/bin/bash
 
-# List of Pokémon
-pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
+# File with list of Pokémon names (e.g., pikachu, bulbasaur, etc.)
+input_file="pokemon_list.txt"
+log_file="errors.log"
 
-# Output directory
-output_dir="pokemon_data"
-mkdir -p "$output_dir"
+# Ensure log file is empty before new run
+> "$log_file"
 
-# Error log file
-error_log="errors.txt"
-> "$error_log"  # Clear previous errors
+# Loop through each Pokémon name in the file
+while read -r name; do
+    attempts=0
+    success=0
 
-# Loop through Pokémon list
-for pokemon in "${pokemon_list[@]}"; do
-  echo "Fetching data for $pokemon..."
+    while [ $attempts -lt 3 ]; do
+        response=$(curl -s -w "%{http_code}" "https://pokeapi.co/api/v2/pokemon/$name" -o response.json)
+        http_code="${response: -3}"
 
-  success=false
-  attempt=1
+        if [ "$http_code" = "200" ]; then
+            # Extract and format the Pokémon data
+            pname=$(jq -r '.name' response.json | sed 's/.*/\u&/')
+            ptype=$(jq -r '.types[0].type.name' response.json | sed 's/.*/\u&/')
+            weight=$(jq '.weight' response.json | awk '{printf "%.1f", $1/10}')
+            height=$(jq '.height' response.json | awk '{printf "%.1f", $1/10}')
 
-  while [ $attempt -le 3 ]; do
-    # Try API request
-    curl -s -f "https://pokeapi.co/api/v2/pokemon/$pokemon" -o "$output_dir/${pokemon}.json"
+            echo "$pname is of type $ptype, weighs ${weight}kg, and is ${height}m tall."
+            success=1
+            break
+        else
+            ((attempts++))
+            sleep 1  # wait before retrying
+        fi
+    done
 
-    if [ $? -eq 0 ]; then
-      echo "Saved data to $output_dir/${pokemon}.json ✅"
-      success=true
-      break
-    else
-      echo "Attempt $attempt failed for $pokemon. Retrying in 2 seconds..."
-      sleep 2
-      ((attempt++))
+    if [ $success -eq 0 ]; then
+        echo "Failed to fetch data for $name after 3 attempts." >> "$log_file"
     fi
-  done
+done < "$input_file"
 
-  # After 3 failed attempts
-  if [ "$success" = false ]; then
-    echo "❌ Failed to fetch data for $pokemon after 3 attempts" | tee -a "$error_log"
-  fi
-
-  # Delay between Pokémon to prevent rate limiting
-  sleep 1
-done

@@ -3,43 +3,59 @@
 # List of Pokémon
 pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
 
-# Output directory
-output_dir="pokemon_data"
-mkdir -p "$output_dir"
+# Log file to track failures
+log_file="errors.log"
+> "$log_file"  # Clear log
 
-# Clear previous errors
-error_log="errors.txt"
-> "$error_log"
+# Temp directory for individual outputs
+mkdir -p output
 
-echo "Fetching Pokémon data in parallel..."
+# Timeout duration (optional)
+timeout=10
 
-# Function to fetch a single Pokémon
+# Function to fetch a single Pokémon's data
 fetch_pokemon() {
-  local pokemon=$1
-  local output_file="$output_dir/${pokemon}.json"
+    name=$1
+    file="output/${name}.txt"
 
-  echo "Fetching data for $pokemon..."
+    # Timeout per process, kill if takes too long
+    {
+        response=$(curl -s "https://pokeapi.co/api/v2/pokemon/$name")
+        if [ -n "$response" ]; then
+            pname=$(echo "$response" | jq -r '.name' | sed 's/.*/\u&/')
+            ptype=$(echo "$response" | jq -r '.types[0].type.name' | sed 's/.*/\u&/')
+            weight=$(echo "$response" | jq '.weight' | awk '{printf "%.1f", $1/10}')
+            height=$(echo "$response" | jq '.height' | awk '{printf "%.1f", $1/10}')
 
-  # Try 3 times
-  for attempt in {1..3}; do
-    curl -s -f "https://pokeapi.co/api/v2/pokemon/$pokemon" -o "$output_file" && {
-      echo "Saved data to $output_file ✅"
-      return
-    }
-
-    echo "Attempt $attempt failed for $pokemon. Retrying..."
-    sleep 2
-  done
-
-  echo "❌ Failed to fetch data for $pokemon after 3 attempts" | tee -a "$error_log"
+            echo "$pname is of type $ptype, weighs ${weight}kg, and is ${height}m tall." > "$file"
+        else
+            echo "Failed to fetch data for $name" >> "$log_file"
+        fi
+    } &
+    echo $!  # Return PID
 }
 
-# Start fetching all Pokémon in parallel
+# Array to keep PIDs
+pids=()
+
+# Start parallel fetches
 for pokemon in "${pokemon_list[@]}"; do
-  fetch_pokemon "$pokemon" &
+    fetch_pokemon "$pokemon"
+    pids+=($!)
 done
 
-# Wait for all background jobs to finish
+# Wait for all to complete with timeout check
+start_time=$(date +%s)
+
+for pid in "${pids[@]}"; do
+    wait $pid 2>/dev/null &
+done
+
 wait
 
-echo "✅ All fetch tasks completed."
+# Combine outputs
+cat output/*.txt
+
+# Clean up
+rm -rf output
+
