@@ -1,61 +1,44 @@
 #!/bin/bash
 
-# List of Pokémon
+mkdir -p pokemon_data
+
 pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
 
-# Log file to track failures
-log_file="errors.log"
-> "$log_file"  # Clear log
+# Timeout in seconds before killing a stuck job
+TIMEOUT=10
 
-# Temp directory for individual outputs
-mkdir -p output
-
-# Timeout duration (optional)
-timeout=10
-
-# Function to fetch a single Pokémon's data
-fetch_pokemon() {
-    name=$1
-    file="output/${name}.txt"
-
-    # Timeout per process, kill if takes too long
-    {
-        response=$(curl -s "https://pokeapi.co/api/v2/pokemon/$name")
-        if [ -n "$response" ]; then
-            pname=$(echo "$response" | jq -r '.name' | sed 's/.*/\u&/')
-            ptype=$(echo "$response" | jq -r '.types[0].type.name' | sed 's/.*/\u&/')
-            weight=$(echo "$response" | jq '.weight' | awk '{printf "%.1f", $1/10}')
-            height=$(echo "$response" | jq '.height' | awk '{printf "%.1f", $1/10}')
-
-            echo "$pname is of type $ptype, weighs ${weight}kg, and is ${height}m tall." > "$file"
-        else
-            echo "Failed to fetch data for $name" >> "$log_file"
-        fi
-    } &
-    echo $!  # Return PID
-}
-
-# Array to keep PIDs
+# Declare an array to hold background PIDs
 pids=()
 
-# Start parallel fetches
-for pokemon in "${pokemon_list[@]}"; do
-    fetch_pokemon "$pokemon"
+fetch_pokemon() {
+    local name=$1
+    echo "Fetching data for $name..."
+    curl -s "https://pokeapi.co/api/v2/pokemon/$name" -o "pokemon_data/${name}.json"
+    if [ $? -eq 0 ]; then
+        echo "Saved data to pokemon_data/${name}.json ✅"
+    else
+        echo "Failed to fetch $name"
+    fi
+}
+
+# Launch jobs and store their PIDs
+for name in "${pokemon_list[@]}"; do
+    fetch_pokemon "$name" &
     pids+=($!)
 done
 
-# Wait for all to complete with timeout check
-start_time=$(date +%s)
-
+# Monitor and manage jobs
 for pid in "${pids[@]}"; do
-    wait $pid 2>/dev/null &
+    # Wait for job with timeout
+    SECONDS=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ $SECONDS -ge $TIMEOUT ]; then
+            echo "Process $pid timed out! Killing..."
+            kill "$pid"
+            break
+        fi
+        sleep 1
+    done
 done
 
-wait
-
-# Combine outputs
-cat output/*.txt
-
-# Clean up
-rm -rf output
-
+echo "All Pokémon data fetch processes complete."
